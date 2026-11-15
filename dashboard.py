@@ -21,7 +21,7 @@ except ImportError:
 # 1. 页面设置与高质感 CSS
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="Hong Kong Tourism Dashboard",
+    page_title="HK Cross Border Analytics Dashboard",
     page_icon="🇭🇰",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -368,7 +368,7 @@ st.markdown('<div id="sec-kpi"></div>', unsafe_allow_html=True)
 
 title_col, btn_col1, btn_col2, btn_col3 = st.columns([4.4, 1.3, 1.4, 1.2], vertical_alignment="center")
 with title_col:
-    st.title("🇭🇰 Hong Kong Tourism Dashboard")
+    st.title("🇭🇰 HK Cross Border Analytics Dashboard")
 with btn_col1:
     if st.button("🔄 Update", use_container_width=True):
         with st.spinner("Downloading from data.gov.hk..."):
@@ -382,7 +382,7 @@ with btn_col2:
     st.download_button(
         "📥 Excel Output",
         data=excel_bytes,
-        file_name=f"HK_Tourism_{base_start.strftime('%Y%m%d')}_{base_end.strftime('%Y%m%d')}.xlsx",
+        file_name=f"HK_Cross_Border_{base_start.strftime('%Y%m%d')}_{base_end.strftime('%Y%m%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
