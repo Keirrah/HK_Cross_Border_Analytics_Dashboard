@@ -31,15 +31,17 @@ BASE_DIR = Path(__file__).resolve().parent
 sys.path.append(str(BASE_DIR))
 
 from download_data import fetch_latest_immd_data
-from weekly_report_data import (
-    load_data, 
-    calculate_port_totals, 
-    apply_mapping, 
-    merge_other, 
-    merge_current_previous, 
-    calculate_metrics, 
-    sort_report, 
-    add_total
+from data_processor import (
+    load_data,
+    calculate_port_totals,
+    apply_mapping,
+    merge_other,
+    merge_current_previous,
+    calculate_metrics,
+    sort_report,
+    add_total,
+    export_report_to_excel_bytes,
+    RAW_FILE
 )
 
 st.markdown("""
@@ -222,7 +224,6 @@ HOLIDAY_RANGES = [
 EXACT_DICT_YEARS = {2023, 2024, 2025, 2026}
 
 def _get_auto_holidays_for_date(dt_val):
-    """当某年不在精确字典内时（如 2027+），用 holidays 库自动兜底识别"""
     if py_holidays is None:
         return []
     d_date = dt_val.date()
@@ -238,13 +239,11 @@ def _get_auto_holidays_for_date(dt_val):
 
 def get_holidays_in_range(start_dt, end_dt):
     found = []
-    # 1. 先查精确字典
     for s, e, name in HOLIDAY_RANGES:
         hs, he = pd.Timestamp(s), pd.Timestamp(e)
         if hs <= end_dt and he >= start_dt:
             if name not in found:
                 found.append(name)
-    # 2. 若区间跨入 2027+ 等未收录年份，自动调用 holidays 库兜底
     cur = start_dt
     while cur <= end_dt:
         if cur.year not in EXACT_DICT_YEARS:
@@ -279,9 +278,9 @@ def get_day_holiday_map(start_dt, end_dt):
 
 
 # ---------------------------------------------------------
-# 3. 侧边栏：导航目录 + 周期选择 + 折叠数据更新
+# 3. 侧边栏：导航目录 + 周期选择
 # ---------------------------------------------------------
-st.sidebar.title("🇭🇰 Navigation & Controls")
+st.sidebar.title("🇭🇰 Navigation")
 
 st.sidebar.markdown("""
 <div style="margin-bottom: 12px;">
@@ -353,37 +352,61 @@ comp_df = df_raw[(df_raw["Date"] >= comp_start) & (df_raw["Date"] <= comp_cutoff
 base_holidays = get_holidays_in_range(base_start, base_end)
 comp_holidays = get_holidays_in_range(comp_start, comp_cutoff_date)
 
-st.sidebar.markdown("---")
-with st.sidebar.expander("⚙️ Data Controls", expanded=False):
-    if st.button("⏬ Update to the latest data", use_container_width=True):
+# 预先计算核心报表，供顶部导出按钮及后续板块共用
+current_p = merge_other(apply_mapping(calculate_port_totals(base_df)))
+previous_p = merge_other(apply_mapping(calculate_port_totals(comp_df)))
+report_df = add_total(sort_report(calculate_metrics(merge_current_previous(current_p, previous_p))))
+
+excel_bytes = export_report_to_excel_bytes(report_df, base_start, base_end)
+raw_csv_bytes = RAW_FILE.read_bytes() if RAW_FILE.exists() else df_raw.to_csv(index=False).encode("utf-8")
+
+
+# ---------------------------------------------------------
+# 4. 顶部标题栏 + 快捷操作按钮 + KPI 汇总 & Insights
+# ---------------------------------------------------------
+st.markdown('<div id="sec-kpi"></div>', unsafe_allow_html=True)
+
+title_col, btn_col1, btn_col2, btn_col3 = st.columns([4.4, 1.3, 1.4, 1.2], vertical_alignment="center")
+with title_col:
+    st.title("🇭🇰 Hong Kong Tourism Dashboard")
+with btn_col1:
+    if st.button("🔄 Update", use_container_width=True):
         with st.spinner("Downloading from data.gov.hk..."):
             try:
                 fetch_latest_immd_data()
-                st.success("✅ Updated!")
                 st.cache_data.clear()
                 st.rerun()
             except Exception as e:
-                st.error(f"❌ Failed: {e}")
+                st.error(f"Update failed: {e}")
+with btn_col2:
+    st.download_button(
+        "📥 Excel Output",
+        data=excel_bytes,
+        file_name=f"HK_Tourism_{base_start.strftime('%Y%m%d')}_{base_end.strftime('%Y%m%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+with btn_col3:
+    st.download_button(
+        "📄 Raw CSV",
+        data=raw_csv_bytes,
+        file_name="latest_immd_raw.csv",
+        mime="text/csv",
+        use_container_width=True
+    )
 
-
-# ---------------------------------------------------------
-# 4. 核心 KPI 汇总卡片 & Executive Insights
-# ---------------------------------------------------------
-st.markdown('<div id="sec-kpi"></div>', unsafe_allow_html=True)
-st.title("🇭🇰 Hong Kong Tourism Dashboard")
-
+latest_data_str = df_raw["Date"].max().strftime("%Y-%m-%d")
 if base_days_count < 7:
-    st.info(f"💡 **WTD Mode**: Current base week includes first **{base_days_count}** days ({base_start.strftime('%m/%d')} ~ {base_end.strftime('%m/%d')}); comparison week trimmed to ({comp_start.strftime('%m/%d')} ~ {comp_cutoff_date.strftime('%m/%d')}) for fair comparison.")
+    st.info(
+        f"💡 **WTD Mode** (Latest Data: `{latest_data_str}`): Current base week includes first **{base_days_count}** days "
+        f"({base_start.strftime('%m/%d')} ~ {base_end.strftime('%m/%d')}); comparison week trimmed to "
+        f"({comp_start.strftime('%m/%d')} ~ {comp_cutoff_date.strftime('%m/%d')}) for fair comparison."
+    )
 else:
-    st.caption(f"Base Week: {base_start.strftime('%Y-%m-%d')} ~ {base_end.strftime('%Y-%m-%d')} | Comparison Week: {comp_start.strftime('%Y-%m-%d')} ~ {comp_cutoff_date.strftime('%Y-%m-%d')}")
-
-current_p = merge_other(apply_mapping(calculate_port_totals(base_df)))
-previous_p = merge_other(apply_mapping(calculate_port_totals(comp_df)))
-
-report_df = merge_current_previous(current_p, previous_p)
-report_df = calculate_metrics(report_df)
-report_df = sort_report(report_df)
-report_df = add_total(report_df)
+    st.caption(
+        f"Latest Data: `{latest_data_str}` | Base Week: {base_start.strftime('%Y-%m-%d')} ~ {base_end.strftime('%Y-%m-%d')} | "
+        f"Comparison Week: {comp_start.strftime('%Y-%m-%d')} ~ {comp_cutoff_date.strftime('%Y-%m-%d')}"
+    )
 
 total_row = report_df[report_df["Group"].isin(["Grand Total", "Total"])].iloc[0]
 mainland_base = total_row["Mainland Arrivals"]
@@ -422,24 +445,23 @@ if not df_core.empty:
     if base_holidays or comp_holidays:
         b_h = "、".join(base_holidays) if base_holidays else "无"
         c_h = "、".join(comp_holidays) if comp_holidays else "无"
-        holiday_line = f'• <span class="holiday-badge">🗓️ 假期影响提示</span> Base Week 含：<b>{b_h}</b> ｜ Comparison Week 含：<b>{c_h}</b><br>'
+        holiday_line = f'<div style="margin: 3px 0;">• <span class="holiday-badge">🗓️ 假期影响提示</span> Base Week 含：<b>{b_h}</b> ｜ Comparison Week 含：<b>{c_h}</b></div>'
 
     st.markdown(
-    f'<div class="insight-box">'
-    f'<div style="font-size: 16px; font-weight: 700; color: #1E5631; margin-bottom: 6px;">📌 Executive Insights（本周核心洞察）</div>'
-    f'{holiday_line}'
-    f'<div style="margin: 3px 0;">• <b>内地访港 (Mainland Arrival)</b>：总体环比 <b>{mainland_wow:+.1f}%</b>；最大入境口岸为 <b>{top_arr_port["Display Name"]}</b>（占 <b>{top_arr_port["Arrival Share"]:.1%}</b>），本期绝对客流{arr_driver_dir}主力为 <b>{top_arr_driver["Display Name"]}</b>（{top_arr_driver["Arr_Diff"]:+,.0f} 人次 / {top_arr_driver["Arrival WoW %"]:+.1%}）。</div>'
-    f'<div style="margin: 3px 0;">• <b>港人离境 (Local Departure)</b>：总体环比 <b>{local_wow:+.1f}%</b>；最大出境口岸为 <b>{top_dep_port["Display Name"]}</b>（占 <b>{top_dep_port["Departure Share"]:.1%}</b>），本期绝对客流{dep_driver_dir}主力为 <b>{top_dep_driver["Display Name"]}</b>（{top_dep_driver["Dep_Diff"]:+,.0f} 人次 / {top_dep_driver["Departure WoW %"]:+.1%}）。</div>'
-    f'</div>',
-    unsafe_allow_html=True
+        f'<div class="insight-box">'
+        f'<div style="font-size: 16px; font-weight: 700; color: #1E5631; margin-bottom: 6px;">📌 Executive Insights（本周核心洞察）</div>'
+        f'{holiday_line}'
+        f'<div style="margin: 3px 0;">• <b>内地访港 (Mainland Arrival)</b>：总体环比 <b>{mainland_wow:+.1f}%</b>；最大入境口岸为 <b>{top_arr_port["Display Name"]}</b>（占 <b>{top_arr_port["Arrival Share"]:.1%}</b>），本期绝对客流{arr_driver_dir}主力为 <b>{top_arr_driver["Display Name"]}</b>（{top_arr_driver["Arr_Diff"]:+,.0f} 人次 / {top_arr_driver["Arrival WoW %"]:+.1%}）。</div>'
+        f'<div style="margin: 3px 0;">• <b>港人离境 (Local Departure)</b>：总体环比 <b>{local_wow:+.1f}%</b>；最大出境口岸为 <b>{top_dep_port["Display Name"]}</b>（占 <b>{top_dep_port["Departure Share"]:.1%}</b>），本期绝对客流{dep_driver_dir}主力为 <b>{top_dep_driver["Display Name"]}</b>（{top_dep_driver["Dep_Diff"]:+,.0f} 人次 / {top_dep_driver["Departure WoW %"]:+.1%}）。</div>'
+        f'</div>',
+        unsafe_allow_html=True
     )
-
 
 st.markdown("---")
 
 
 # ---------------------------------------------------------
-# 5. 数据表格 (清爽版高亮 + 标题栏节假日标注)
+# 5. 数据表格 (清爽版高亮 + 两行左对齐日期)
 # ---------------------------------------------------------
 st.markdown('<div id="sec-table"></div>', unsafe_allow_html=True)
 st.subheader("📋 Weekly Report Data Verification Table")
@@ -470,7 +492,6 @@ def render_custom_table(df, b_start, b_end, c_start, c_end, b_hols, c_hols):
         <div>Base Period: <span style="color:#000;">{base_date_str}</span>{b_tag}</div>
         <div>Comparison Period (Audit): <span style="color:#000;">{comp_date_str}</span>{c_tag}</div>
     </div>
-
     <table class="report-table">
         <thead>
             <tr>
@@ -544,7 +565,7 @@ st.markdown("---")
 
 
 # ---------------------------------------------------------
-# 6. 每日对比：并排分组 + Top 3 口岸 & 浅灰 Other 堆叠柱状图
+# 6. 每日对比：并排分组 + Top 3 口岸 & 浅灰 Other + 日期横坐标
 # ---------------------------------------------------------
 st.markdown('<div id="sec-daily"></div>', unsafe_allow_html=True)
 st.subheader("🗓️ Daily Comparison within the Weeks (Top 3 Borders + Other)")
@@ -635,11 +656,11 @@ def build_grouped_stacked_chart(df_b, df_c, metric_col, title_str, base_palette,
     fig.update_layout(
         title=dict(text=title_str, y=0.96, x=0),
         barmode="stack",
-        height=450,
+        height=460,
         hovermode="x unified",
         yaxis_title="Passengers (人次)",
         xaxis_title="",
-        margin=dict(t=115, b=40),
+        margin=dict(t=115, b=55),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0)
     )
     return fig

@@ -1,13 +1,14 @@
-# Bytecode and Cache
+# Python cache
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Input Data (Large raw CSVs downloaded dynamically)
-input/latest_immd_raw.csv
-input/backup_immd_raw.csv
-
-# macOS / OS system files
+# OS & Editor files
 .DS_Store
-.AppleDouble
-.LSOverride
+.vscode/
+.devcontainer/
+.Rhistory
+
+# Local backup & output (keep input/latest_immd_raw.csv for Streamlit Cloud)
+input/backup_immd_raw.csv
+output/
